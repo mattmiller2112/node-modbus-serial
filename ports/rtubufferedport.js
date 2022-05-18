@@ -9,6 +9,8 @@ const EXCEPTION_LENGTH = 5;
 const MIN_DATA_LENGTH = 6;
 const MAX_BUFFER_LENGTH = 256;
 const CRC_LENGTH = 2;
+const READ_HOLDING_REGISTERS_FUNCTION_CODE = 3;
+const READ_INPUT_REGISTERS_FUNCTION_CODE = 4;
 const READ_DEVICE_IDENTIFICATION_FUNCTION_CODE = 43;
 const LENGTH_UNKNOWN = "unknown";
 const BITS_TO_NUM_OF_OBJECTS = 7;
@@ -112,7 +114,9 @@ class RTUBufferedPort extends EventEmitter {
 
                 if (unitId !== self._id) continue;
 
-                if (functionCode === self._cmd && functionCode === READ_DEVICE_IDENTIFICATION_FUNCTION_CODE) {
+                if (functionCode === self._cmd) {
+                  // first, check for enough data for the FC43 case
+                  if (functionCode === READ_DEVICE_IDENTIFICATION_FUNCTION_CODE) {
                     if (bufferLength <= BITS_TO_NUM_OF_OBJECTS + i) {
                         return;
                     }
@@ -122,15 +126,27 @@ class RTUBufferedPort extends EventEmitter {
                         self._emitData(i, result.bufLength);
                         return;
                     }
-                } else {
-                    if (functionCode === self._cmd && i + expectedLength <= bufferLength) {
-                        self._emitData(i, expectedLength);
-                        return;
-                    }
-                    if (functionCode === (0x80 | self._cmd) && i + EXCEPTION_LENGTH <= bufferLength) {
-                        self._emitData(i, EXCEPTION_LENGTH);
-                        return;
-                    }
+                  // next, check for enough data for our expected length
+                  } else if (i + expectedLength <= bufferLength) {
+                      // finally, for FC3 and FC4, check for expected numberOfBytesToFollow
+                      if ((functionCode === READ_HOLDING_REGISTERS_FUNCTION_CODE) ||
+                          (functionCode === READ_INPUT_REGISTERS_FUNCTION_CODE)) {
+                          var numberOfDataBytesToFollow = self._buffer[i + 2];
+                          if (self._numberOfDataBytesToFollow === numberOfDataBytesToFollow) {
+                              self._emitData(i, expectedLength);
+                              return;
+                          } else {
+                              continue;
+                          }
+                      // for all other FC's, no additional length check
+                      } else {
+                          self._emitData(i, expectedLength);
+                          return;
+                      }
+                  }
+                } else if (functionCode === (0x80 | self._cmd) && i + EXCEPTION_LENGTH <= bufferLength) {
+                    self._emitData(i, EXCEPTION_LENGTH);
+                    return;
                 }
 
                 // frame header matches, but still missing bytes pending
@@ -209,6 +225,7 @@ class RTUBufferedPort extends EventEmitter {
             case 4:
                 length = data.readUInt16BE(4);
                 this._length = 3 + 2 * length + 2;
+                this._numberOfDataBytesToFollow = length * 2;
                 break;
             case 5:
             case 6:
