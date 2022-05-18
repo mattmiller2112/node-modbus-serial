@@ -10,6 +10,9 @@ var EXCEPTION_LENGTH = 5;
 var MIN_DATA_LENGTH = 6;
 var MAX_BUFFER_LENGTH = 256;
 
+const READ_HOLDING_REGISTERS_FUNCTION_CODE = 3;
+const READ_INPUT_REGISTERS_FUNCTION_CODE = 4;
+
 /**
  * Simulate a modbus-RTU port using buffered serial connection.
  *
@@ -64,8 +67,19 @@ var RTUBufferedPort = function(path, options) {
             if (unitId !== self._id) continue;
 
             if (functionCode === self._cmd && i + expectedLength <= bufferLength) {
-                self._emitData(i, expectedLength);
-                return;
+                if ((functionCode === READ_HOLDING_REGISTERS_FUNCTION_CODE) ||
+                    (functionCode === READ_INPUT_REGISTERS_FUNCTION_CODE)) {
+                    var numberOfDataBytesToFollow = self._buffer[i + 2];
+                    if (self._numberOfDataBytesToFollow === numberOfDataBytesToFollow) {
+                        self._emitData(i, expectedLength);
+                        return;
+                    } else {
+                        continue;
+                    }
+                } else {
+                    self._emitData(i, expectedLength);
+                    return;
+                }
             }
             if (functionCode === (0x80 | self._cmd) && i + EXCEPTION_LENGTH <= bufferLength) {
                 self._emitData(i, EXCEPTION_LENGTH);
@@ -155,6 +169,7 @@ RTUBufferedPort.prototype.write = function(data) {
         case 4:
             length = data.readUInt16BE(4);
             this._length = 3 + 2 * length + 2;
+            this._numberOfDataBytesToFollow = length * 2;
             break;
         case 5:
         case 6:
